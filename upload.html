@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Upload Medical Data - St. John's</title>
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='images/logo1.png') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/upload.css') }}">
+    <style>
+        .logout-btn:hover {
+            background-color: #b91c1c;
+            color: #ffffff !important;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="header-content">
+            <img src="{{ url_for('static', filename='images/logo1.png') }}" alt="Logo" class="logo">
+            <h1>St. John's National Academy Of Health Sciences</h1>
+        </div>
+    </header>
+
+    <!-- Navigation Bar -->
+    <div class="navbar" style="position: relative;">
+        <ul>
+            <li><a href="{{ url_for('index') }}">Home</a></li>
+            <li><a href="{{ url_for('about') }}">About</a></li>
+            <li><a href="{{ url_for('contact') }}">Contact</a></li>
+        </ul>
+        <a href="{{ url_for('logout_page') }}" class="logout-btn" style="position: absolute; right: 40px; top: 50%; transform: translateY(-50%); color: #fca5a5; text-decoration: none; font-size: 18px; font-weight: 500; padding: 6px 16px; border-radius: 4px; transition: all 0.3s;">Logout</a>
+    </div>
+
+    <main class="upload-main">
+        <div class="upload-container">
+            <h2>Unified Data Upload Portal</h2>
+            <p class="subtitle">Drop or select your Excel sheet (.xls, .xlsx). The system automatically detects the correct medical category (Demographics, Pathology, DMP, etc.) and uploads it dynamically.</p>
+
+            <form id="uploadForm" enctype="multipart/form-data">
+                <!-- File input drop zone -->
+                <div class="form-group">
+                    <label>Select Excel File</label>
+                    <div class="dropzone" id="dropzone">
+                        <span class="dropzone-text">Drag & Drop your Excel file here or click to browse</span>
+                        <input type="file" id="fileInput" name="file" accept=".xls,.xlsx" required>
+                    </div>
+                    <div class="selected-file-info" id="fileInfo" style="display: none;">
+                        <span class="file-name" id="selectedFileName">filename.xlsx</span>
+                        <button type="button" class="remove-file-btn" id="removeFileBtn">Close</button>
+                    </div>
+                </div>
+
+                <div class="error-msg" id="file-error" style="display: none;">Only .xls and .xlsx files are allowed.</div>
+
+                <button type="submit" class="submit-btn" id="submitBtn">Upload & Auto-Process</button>
+            </form>
+
+            <!-- Loading Spinner & Message Box -->
+            <div class="loading-overlay" id="loadingOverlay">
+                <div class="spinner"></div>
+                <p>Analyzing columns, mapping categories, and updating Google Sheets dynamically...</p>
+            </div>
+            
+            <div id="message" class="result-message" style="display: none;"></div>
+        </div>
+
+        <div class="instructions-panel">
+            <h3>Unified Auto-Matching Upload Guide</h3>
+            <ul>
+                <li>The Excel file **must contain a column named `Patient_ID`** in the first row. This acts as the unique lookup key.</li>
+                <li><strong>No Category Selection Required:</strong> The backend automatically scans the column headers in your file, matches them against all existing sheets, and maps your data to the correct category (e.g. Pathology, RMD, DMP) instantly!</li>
+                <li><strong>Dynamic Columns (Admin Flexibility):</strong> If you add new columns to your Excel, the system dynamically appends them to your Google Sheets tab without losing any existing data!</li>
+                <li>Existing patients with matching <code>Patient_ID</code>s will be updated with new data, and new patients will be inserted automatically.</li>
+            </ul>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer>
+        <div class="footer-container">
+            <div class="footer-info">
+                <h3>Contact Us</h3>
+                <p>100 Feet Rd, John Nagar, Koramangala, Bengaluru</p>
+                <p>Phone: +91 80 49467000</p>
+                <p>Email: <a href="mailto:enquiry@sjri.res.in">enquiry@sjri.res.in</a></p>
+            </div>
+            <div class="footer-copyright">
+                <p>&copy; 2026 MEDTECH LAB. All Rights Reserved.</p>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+    const dropzone = document.getElementById('dropzone');
+    const fileInput = document.getElementById('fileInput');
+    const fileInfo = document.getElementById('fileInfo');
+    const selectedFileName = document.getElementById('selectedFileName');
+    const removeFileBtn = document.getElementById('removeFileBtn');
+    const fileError = document.getElementById('file-error');
+    const uploadForm = document.getElementById('uploadForm');
+    const msgDiv = document.getElementById('message');
+    const submitBtn = document.getElementById('submitBtn');
+    const loadingOverlay = document.getElementById('loadingOverlay');
+
+    // Drag-and-drop actions
+    dropzone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropzone.classList.add('dragover');
+    });
+
+    dropzone.addEventListener('dragleave', () => {
+        dropzone.classList.remove('dragover');
+    });
+
+    dropzone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropzone.classList.remove('dragover');
+        if (e.dataTransfer.files.length) {
+            fileInput.files = e.dataTransfer.files;
+            handleFileSelect();
+        }
+    });
+
+    dropzone.addEventListener('click', () => {
+        fileInput.click();
+    });
+
+    fileInput.addEventListener('change', handleFileSelect);
+
+    function handleFileSelect() {
+        if (fileInput.files.length > 0) {
+            const file = fileInput.files[0];
+            const fname = file.name.toLowerCase();
+            
+            if (!fname.endsWith('.xls') && !fname.endsWith('.xlsx')) {
+                fileError.style.display = 'block';
+                fileInput.value = '';
+                fileInfo.style.display = 'none';
+                dropzone.style.display = 'flex';
+                return;
+            }
+
+            fileError.style.display = 'none';
+            selectedFileName.textContent = file.name;
+            fileInfo.style.display = 'flex';
+            dropzone.style.display = 'none';
+        }
+    }
+
+    removeFileBtn.addEventListener('click', () => {
+        fileInput.value = '';
+        fileInfo.style.display = 'none';
+        dropzone.style.display = 'flex';
+        fileError.style.display = 'none';
+    });
+
+    uploadForm.addEventListener('submit', async function(e) {
+        e.preventDefault();
+
+        if (!fileInput.files.length) {
+            msgDiv.style.display = 'block';
+            msgDiv.className = 'result-message error';
+            msgDiv.innerHTML = '<p>Please select an Excel file.</p>';
+            return;
+        }
+
+        submitBtn.disabled = true;
+        loadingOverlay.style.display = 'flex';
+        msgDiv.style.display = 'none';
+
+        const fd = new FormData();
+        fd.append('file', fileInput.files[0]);
+
+        try {
+            const resp = await fetch('/api/upload', {
+                method: 'POST',
+                body: fd
+            });
+            const data = await resp.json();
+
+            msgDiv.style.display = 'block';
+            if (data.success) {
+                msgDiv.className = 'result-message success';
+                
+                // Format markdown bold dynamically
+                let formattedMsg = data.message.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+                let html = '<h4>Data Upload Complete!</h4>';
+                html += '<p>' + formattedMsg + '</p>';
+                
+                if (data.new_columns && data.new_columns.length > 0) {
+                    html += '<div class="new-cols-badge">New Column(s) added dynamically to Sheet: <strong>' + data.new_columns.join(', ') + '</strong></div>';
+                }
+
+                if (data.warnings && data.warnings.length > 0) {
+                    html += '<div class="warning-box">';
+                    data.warnings.forEach(w => {
+                        html += '<p>' + w + '</p>';
+                    });
+                    html += '</div>';
+                }
+                msgDiv.innerHTML = html;
+                
+                // Clear inputs on success
+                fileInput.value = '';
+                fileInfo.style.display = 'none';
+                dropzone.style.display = 'flex';
+            } else {
+                msgDiv.className = 'result-message error';
+                msgDiv.innerHTML = '<h4>Upload Failed</h4><p>' + data.message + '</p>';
+            }
+        } catch(err) {
+            msgDiv.style.display = 'block';
+            msgDiv.className = 'result-message error';
+            msgDiv.innerHTML = '<h4>Connection/Network Error</h4><p>' + err.message + '</p>';
+        } finally {
+            submitBtn.disabled = false;
+            loadingOverlay.style.display = 'none';
+        }
+    });
+    </script>
+</body>
+</html>
