@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - SJRI Medical Portal</title>
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='images/logo1.png') }}">
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: 'Times New Roman', Georgia, serif;
+            background-color: #f8fafc;
+            color: #0f172a;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+        }
+        header {
+            background-color: #002B5B;
+            color: white;
+            padding: 15px 30px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .header-content {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .logo {
+            height: 55px;
+            width: auto;
+        }
+        h1 {
+            font-size: 20px;
+            font-weight: 500;
+            letter-spacing: 0.5px;
+        }
+        .navbar {
+            background-color: #1A5F7A;
+            padding: 10px 30px;
+        }
+        .navbar ul {
+            list-style: none;
+            display: flex;
+            gap: 25px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .navbar a {
+            color: rgba(255,255,255,0.9);
+            text-decoration: none;
+            font-size: 14px;
+            font-weight: bold;
+            transition: color 0.2s;
+        }
+        .navbar a:hover {
+            color: white;
+        }
+        main {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 40px 20px;
+        }
+        .login-card {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 25px -5px rgba(0,0,0,0.05), 0 8px 10px -6px rgba(0,0,0,0.03);
+            border: 1px solid #e2e8f0;
+            width: 100%;
+            max-width: 420px;
+            padding: 40px;
+        }
+        .login-card h2 {
+            font-size: 22px;
+            font-weight: bold;
+            color: #1e293b;
+            margin-bottom: 8px;
+            text-align: center;
+        }
+        .subtitle {
+            font-size: 14px;
+            color: #64748b;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        .form-group label {
+            display: block;
+            font-size: 13px;
+            font-weight: bold;
+            color: #475569;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .form-input {
+            width: 100%;
+            padding: 10px 14px;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            font-size: 14px;
+            font-family: inherit;
+            outline: none;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        .form-input:focus {
+            border-color: #344CB7;
+            box-shadow: 0 0 0 2px rgba(52, 76, 183, 0.15);
+        }
+        .error-message {
+            background-color: #fef2f2;
+            border: 1px solid #fca5a5;
+            color: #b91c1c;
+            border-radius: 6px;
+            padding: 10px 14px;
+            font-size: 13px;
+            margin-bottom: 20px;
+        }
+        .submit-btn {
+            width: 100%;
+            padding: 12px;
+            background-color: #344CB7;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            font-family: inherit;
+            transition: background-color 0.2s;
+        }
+        .submit-btn:hover {
+            background-color: #001861;
+        }
+        footer {
+            background-color: #0f172a;
+            color: #94a3b8;
+            padding: 25px 30px;
+            font-size: 12px;
+            border-top: 4px solid #344CB7;
+        }
+        .footer-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        @media (max-width: 768px) {
+            .footer-container {
+                flex-direction: column;
+                gap: 15px;
+                text-align: center;
+            }
+        }
+        .footer-info h3 {
+            color: white;
+            font-size: 14px;
+            margin-bottom: 8px;
+        }
+        .footer-info p {
+            line-height: 1.6;
+        }
+        .footer-info a {
+            color: #38bdf8;
+            text-decoration: none;
+        }
+        .footer-info a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="header-content">
+            <img src="{{ url_for('static', filename='images/logo1.png') }}" alt="Logo" class="logo">
+            <h1>St. John's National Academy Of Health Sciences</h1>
+        </div>
+    </header>
+
+    <div class="navbar">
+        <ul>
+            <li><a href="{{ url_for('index') }}">Home</a></li>
+            <li><a href="{{ url_for('about') }}">About</a></li>
+            <li><a href="{{ url_for('contact') }}">Contact</a></li>
+        </ul>
+    </div>
+
+    <main>
+        <div class="login-card">
+            <h2>Authorized Portal Access</h2>
+            <div class="subtitle">Please sign in to access the Upload Medical Data page</div>
+
+            {% if error %}
+            <div class="error-message">
+                {{ error }}
+            </div>
+            {% endif %}
+
+            <form action="{{ url_for('login_page') }}" method="POST">
+                <div class="form-group">
+                    <label for="username">Username</label>
+                    <input type="text" id="username" name="username" class="form-input" required autocomplete="username" autofocus>
+                </div>
+
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" name="password" class="form-input" required autocomplete="current-password">
+                </div>
+
+                <button type="submit" class="submit-btn">Login & Access Portal</button>
+            </form>
+        </div>
+    </main>
+
+    <footer>
+        <div class="footer-container">
+            <div class="footer-info">
+                <h3>Contact Us</h3>
+                <p>100 Feet Rd, John Nagar, Koramangala, Bengaluru</p>
+                <p>Phone: +91 80 49467000</p>
+                <p>Email: <a href="mailto:enquiry@sjri.res.in">enquiry@sjri.res.in</a></p>
+            </div>
+            <div class="footer-copyright">
+                <p>&copy; 2026 MEDTECH LAB. All Rights Reserved.</p>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>

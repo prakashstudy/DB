@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Contact Us - St. John's Research Institute</title>
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='images/logo1.png') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/contact.css') }}">
+</head>
+<body>
+    <header>
+        <div class="header-content">
+            <img src="{{ url_for('static', filename='images/logo1.png') }}" alt="Logo" class="logo">
+            <h1>St. John's National Academy Of Health Sciences</h1>
+        </div>
+    </header>
+
+    <!-- Navigation Bar -->
+    <div class="navbar">
+        <ul>
+            <li><a href="{{ url_for('index') }}">Home</a></li>
+            <li><a href="{{ url_for('about') }}">About</a></li>
+            <li><a href="{{ url_for('contact') }}" class="active">Contact</a></li>
+        </ul>
+    </div>
+
+    <main class="contact-main">
+        <div class="contact-card">
+            <h2>Get in Touch</h2>
+            <p class="subtitle">St. John's Research Institute & Medical Academy</p>
+
+            <div class="contact-details">
+                <div class="detail-item">
+                    <div class="text">
+                        <h4>Location</h4>
+                        <p>100 Feet Rd, John Nagar, Koramangala, Bengaluru, Karnataka 560034</p>
+                    </div>
+                </div>
+
+                <div class="detail-item">
+                    <div class="text">
+                        <h4>Phone Number</h4>
+                        <p>+91 80 49467000</p>
+                    </div>
+                </div>
+
+                <div class="detail-item">
+                    <div class="text">
+                        <h4>Email Address</h4>
+                        <p><a href="mailto:enquiry@sjri.res.in">enquiry@sjri.res.in</a></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer>
+        <div class="footer-container">
+            <div class="footer-info">
+                <h3>Contact Us</h3>
+                <p>100 Feet Rd, John Nagar, Koramangala, Bengaluru</p>
+                <p>Phone: +91 80 49467000</p>
+                <p>Email: <a href="mailto:enquiry@sjri.res.in">enquiry@sjri.res.in</a></p>
+            </div>
+            <div class="footer-copyright">
+                <p>&copy; 2026 MEDTECH LAB. All Rights Reserved.</p>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>
