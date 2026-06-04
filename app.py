@@ -274,17 +274,26 @@ def process_excel_data(excel_rows):
         for row in excel_rows[1:]:
             d = {}
             pid_val = ""
+            # Safely fetch patient ID
             for idx, h in enumerate(standard_headers):
                 if h == "Patient_ID":
-                    pid_val = normalize_pid(row[idx]) if row[idx] is not None else ""
+                    if idx < len(row):
+                        pid_val = normalize_pid(row[idx]) if row[idx] is not None else ""
                     break
+            
             if not pid_val:
                 continue
+                
             d["Patient_ID"] = pid_val
+            
+            # Safely fetch other columns for this tab
             for idx, h in enumerate(standard_headers):
                 if h in tab_cols:
-                    val = str(row[idx]).strip() if row[idx] is not None else ""
-                    d[h] = val
+                    if idx < len(row):
+                        val = str(row[idx]).strip() if row[idx] is not None else ""
+                        d[h] = val
+                    else:
+                        d[h] = "" # Row is shorter than headers
             tab_rows.append(d)
         tables_payload[tab] = {"headers": tab_headers, "rows": tab_rows}
 

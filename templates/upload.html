@@ -189,7 +189,7 @@
             const dataRows = allRows.slice(1).filter(r => r.length > 0);
             
             // 2. Chunking Logic
-            const CHUNK_SIZE = 50; 
+            const CHUNK_SIZE = 250; 
             const totalChunks = Math.ceil(dataRows.length / CHUNK_SIZE);
             
             let combinedWarnings = [];
