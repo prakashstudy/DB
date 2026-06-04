@@ -90,6 +90,9 @@
         </div>
     </footer>
 
+    <!-- SheetJS for client-side Excel parsing -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
     <script>
     const dropzone = document.getElementById('dropzone');
     const fileInput = document.getElementById('fileInput');
@@ -164,57 +167,113 @@
             return;
         }
 
+        const file = fileInput.files[0];
         submitBtn.disabled = true;
         loadingOverlay.style.display = 'flex';
         msgDiv.style.display = 'none';
 
-        const fd = new FormData();
-        fd.append('file', fileInput.files[0]);
-
         try {
-            const resp = await fetch('/api/upload', {
-                method: 'POST',
-                body: fd
-            });
-            const data = await resp.json();
-
-            msgDiv.style.display = 'block';
-            if (data.success) {
-                msgDiv.className = 'result-message success';
-                
-                // Format markdown bold dynamically
-                let formattedMsg = data.message.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-                let html = '<h4>Data Upload Complete!</h4>';
-                html += '<p>' + formattedMsg + '</p>';
-                
-                if (data.new_columns && data.new_columns.length > 0) {
-                    html += '<div class="new-cols-badge">New Column(s) added dynamically to Sheet: <strong>' + data.new_columns.join(', ') + '</strong></div>';
-                }
-
-                if (data.warnings && data.warnings.length > 0) {
-                    html += '<div class="warning-box">';
-                    data.warnings.forEach(w => {
-                        html += '<p>' + w + '</p>';
-                    });
-                    html += '</div>';
-                }
-                msgDiv.innerHTML = html;
-                
-                // Clear inputs on success
-                fileInput.value = '';
-                fileInfo.style.display = 'none';
-                dropzone.style.display = 'flex';
-            } else {
-                msgDiv.className = 'result-message error';
-                msgDiv.innerHTML = '<h4>Upload Failed</h4><p>' + data.message + '</p>';
+            // 1. Read Excel in Browser
+            const dataBuffer = await file.arrayBuffer();
+            const workbook = XLSX.read(dataBuffer, { type: 'array' });
+            const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+            
+            // Convert to 2D Array (Header + Rows)
+            const allRows = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
+            
+            if (allRows.length < 2) {
+                throw new Error("The Excel file appears to be empty or missing data rows.");
             }
+
+            const headers = allRows[0];
+            const dataRows = allRows.slice(1).filter(r => r.length > 0);
+            
+            // 2. Chunking Logic
+            const CHUNK_SIZE = 50; 
+            const totalChunks = Math.ceil(dataRows.length / CHUNK_SIZE);
+            
+            let combinedWarnings = [];
+            let combinedNewCols = [];
+            let summaryMessages = [];
+
+            for (let i = 0; i < totalChunks; i++) {
+                const chunkStart = i * CHUNK_SIZE;
+                const chunkEnd = chunkStart + CHUNK_SIZE;
+                const chunkData = dataRows.slice(chunkStart, chunkEnd);
+                
+                // Update UI overlay message
+                loadingOverlay.querySelector('p').innerHTML = 
+                    `Parsing & Uploading Batch <strong>${i + 1} of ${totalChunks}</strong>...<br><small>Processing rows ${chunkStart + 1} to ${Math.min(chunkEnd, dataRows.length)}</small>`;
+
+                const payload = {
+                    rows: [headers, ...chunkData]
+                };
+
+                const resp = await fetch('/api/upload-json', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!resp.ok) {
+                    const errorText = await resp.text();
+                    throw new Error(`Batch ${i+1} failed: ${errorText}`);
+                }
+
+                let result;
+                try {
+                    result = await resp.json();
+                } catch(e) {
+                    const text = await resp.text();
+                    console.error("Failed to parse JSON response:", text);
+                    throw new Error(`The server returned an invalid response (not JSON). This usually happens if you were logged out or the server crashed. Response preview: ${text.substring(0, 200)}...`);
+                }
+
+                if (!result.success) {
+                    throw new Error(`Batch ${i+1} Error: ${result.message}`);
+                }
+
+                // Collect results
+                if (result.warnings) combinedWarnings = combinedWarnings.concat(result.warnings);
+                if (result.new_columns) combinedNewCols = combinedNewCols.concat(result.new_columns);
+                summaryMessages.push(result.message);
+            }
+
+            // 3. Final Success UI
+            msgDiv.style.display = 'block';
+            msgDiv.className = 'result-message success';
+            
+            let html = '<h4>Data Upload Complete!</h4>';
+            html += `<p>Successfully processed ${dataRows.length} rows in ${totalChunks} batches.</p>`;
+            
+            if (combinedNewCols.length > 0) {
+                const uniqueCols = [...new Set(combinedNewCols)];
+                html += '<div class="new-cols-badge">New Column(s) added: <strong>' + uniqueCols.join(', ') + '</strong></div>';
+            }
+
+            if (combinedWarnings.length > 0) {
+                const uniqueWarnings = [...new Set(combinedWarnings)];
+                html += '<div class="warning-box"><strong>Warnings:</strong>';
+                uniqueWarnings.forEach(w => html += '<p>' + w + '</p>');
+                html += '</div>';
+            }
+            
+            msgDiv.innerHTML = html;
+            
+            // Clear inputs
+            fileInput.value = '';
+            fileInfo.style.display = 'none';
+            dropzone.style.display = 'flex';
+
         } catch(err) {
             msgDiv.style.display = 'block';
             msgDiv.className = 'result-message error';
-            msgDiv.innerHTML = '<h4>Connection/Network Error</h4><p>' + err.message + '</p>';
+            msgDiv.innerHTML = '<h4>Upload Failed</h4><p>' + err.message + '</p>';
+            console.error(err);
         } finally {
             submitBtn.disabled = false;
             loadingOverlay.style.display = 'none';
+            loadingOverlay.querySelector('p').textContent = "Analyzing columns, mapping categories, and updating Google Sheets dynamically...";
         }
     });
     </script>

@@ -217,172 +217,148 @@ def view_page():
 
 # ── API ───────────────────────────────────────────────────────────────
 
+def process_excel_data(excel_rows):
+    """Core logic to categorize and upload rows of data (headers in first row)."""
+    if not excel_rows:
+        return False, "Data is empty.", 400
+
+    # Retrieve and clean excel column headers
+    raw_headers = [str(h).strip() if h is not None else "" for h in excel_rows[0]]
+    
+    # Standardize patient ID header variations
+    standard_headers = []
+    patient_id_found = False
+    for h in raw_headers:
+        if not h:
+            standard_headers.append("")
+            continue
+        h_clean = h.replace(" ", "_").replace("-", "_")
+        if h_clean.lower() in ("patient_id", "patientid", "id_patient", "pat_id"):
+            standard_headers.append("Patient_ID")
+            patient_id_found = True
+        else:
+            standard_headers.append(h)
+
+    if not patient_id_found:
+        return False, 'Data is missing the "Patient_ID" or "Patient ID" column.', 400
+
+    # Get existing Google Sheets headers to route columns
+    s = db()
+    existing_sheet_headers = s.get_sheet_headers()
+
+    # Dynamic category classifier loop
+    col_to_tab = {}
+    for h in standard_headers:
+        if not h or h == "Patient_ID":
+            continue
+        found_tab = None
+        h_std = h.replace(" ", "_").replace("-", "_").lower()
+        for tab, tab_hdrs in existing_sheet_headers.items():
+            tab_hdrs_std = [x.replace(" ", "_").replace("-", "_").lower() for x in tab_hdrs]
+            if h_std in tab_hdrs_std:
+                found_tab = tab
+                break
+        if not found_tab:
+            found_tab = classify_column(h)
+        col_to_tab[h] = found_tab
+
+    # Build dynamic bulk payload split by category tab
+    tables_payload = {}
+    from sheets import TABLES
+    for tab in TABLES:
+        tab_cols = [h for h in standard_headers if h and col_to_tab.get(h) == tab]
+        if not tab_cols:
+            continue
+        tab_headers = ["Patient_ID"] + tab_cols
+        tab_rows = []
+        for row in excel_rows[1:]:
+            d = {}
+            pid_val = ""
+            for idx, h in enumerate(standard_headers):
+                if h == "Patient_ID":
+                    pid_val = normalize_pid(row[idx]) if row[idx] is not None else ""
+                    break
+            if not pid_val:
+                continue
+            d["Patient_ID"] = pid_val
+            for idx, h in enumerate(standard_headers):
+                if h in tab_cols:
+                    val = str(row[idx]).strip() if row[idx] is not None else ""
+                    d[h] = val
+            tab_rows.append(d)
+        tables_payload[tab] = {"headers": tab_headers, "rows": tab_rows}
+
+    if not tables_payload:
+        return False, "No categorized data columns found.", 400
+
+    # Send bulk payload to Apps Script
+    result = s.bulk_upload(tables_payload)
+    joined_cache["data"] = None # Clear cache
+
+    # Assemble summary
+    parts = []
+    for tab, stats in result["results"].items():
+        if stats["inserted"] or stats["updated"]:
+            parts.append(f"{tab}: {stats['inserted']} added, {stats['updated']} updated")
+    status_msg = "Successfully processed: " + ", ".join(parts) + "."
+    
+    return True, {
+        "message": status_msg,
+        "warnings": result["warnings"],
+        "new_columns": result["new_columns"]
+    }, 200
+
+
 @app.route("/api/upload", methods=["POST"])
 def api_upload():
     if not session.get("logged_in"):
-        return jsonify(success=False, message="Unauthorized. Please log in first."), 401
-
+        return jsonify(success=False, message="Unauthorized."), 401
     if "file" not in request.files or not request.files["file"].filename:
-        return jsonify(success=False, message="No Excel file selected."), 400
+        return jsonify(success=False, message="No file selected."), 400
 
     f = request.files["file"]
-    ext = f.filename.rsplit(".", 1)[-1].lower() if "." in f.filename else ""
-    if ext not in ("xls", "xlsx"):
-        return jsonify(success=False, message="Only .xls and .xlsx files are allowed."), 400
-
-    tmp = os.path.join(app.root_path, "uploads")
-    os.makedirs(tmp, exist_ok=True)
-    path = os.path.join(tmp, f.filename)
+    path = os.path.join("/tmp", f.filename)
     f.save(path)
-
     try:
-        # Load workbook dynamically and read formulas as values
         wb = load_workbook(path, read_only=True, data_only=True)
-        
-        # Check if the real sheet exists, otherwise use first worksheet
-        target_ws_name = "Final data base Sheet "
-        if target_ws_name not in wb.sheetnames:
-            target_ws_name = wb.sheetnames[0]
-            
-        ws = wb[target_ws_name]
-        
-        # Read rows sequentially, breaking early if we hit consecutive empty rows
+        ws = wb[wb.sheetnames[0]]
         excel_rows = []
-        empty_count = 0
-        
         for row in ws.iter_rows(values_only=True):
-            if all(v is None or str(v).strip() == "" for v in row):
-                empty_count += 1
-                if empty_count >= 10:
-                    break
-                continue
-            
-            empty_count = 0
+            if all(v is None or str(v).strip() == "" for v in row): continue
             excel_rows.append(row)
-
         wb.close()
         
-        if not excel_rows:
-            return jsonify(success=False, message=f"Excel sheet '{target_ws_name}' is empty."), 400
-
-        # Retrieve and clean excel column headers
-        raw_headers = [str(h).strip() if h is not None else "" for h in excel_rows[0]]
-        
-        # Standardize patient ID header variations (e.g. "Patient ID", "patient_id") to "Patient_ID"
-        standard_headers = []
-        patient_id_found = False
-        
-        for h in raw_headers:
-            if not h:
-                standard_headers.append("")
-                continue
-            h_clean = h.replace(" ", "_").replace("-", "_")
-            if h_clean.lower() in ("patient_id", "patientid", "id_patient", "pat_id"):
-                standard_headers.append("Patient_ID")
-                patient_id_found = True
-            else:
-                standard_headers.append(h)
-
-        if not patient_id_found:
-            return jsonify(
-                success=False,
-                message='Excel file is missing the "Patient_ID" or "Patient ID" column in the header row.'
-            ), 400
-
-        # Get existing Google Sheets headers to route columns to where they already belong
-        s = db()
-        existing_sheet_headers = s.get_sheet_headers()
-
-        # Dynamic category classifier loop
-        col_to_tab = {}
-        for h in standard_headers:
-            if not h or h == "Patient_ID":
-                continue
-                
-            found_tab = None
-            h_std = h.replace(" ", "_").replace("-", "_").lower()
-            
-            for tab, tab_hdrs in existing_sheet_headers.items():
-                tab_hdrs_std = [x.replace(" ", "_").replace("-", "_").lower() for x in tab_hdrs]
-                if h_std in tab_hdrs_std:
-                    found_tab = tab
-                    break
-            
-            if not found_tab:
-                found_tab = classify_column(h)
-                
-            col_to_tab[h] = found_tab
-
-        # Build dynamic bulk payload split by category tab
-        tables_payload = {}
-        for tab in TABLES:
-            tab_cols = [h for h in standard_headers if h and col_to_tab.get(h) == tab]
-            if not tab_cols:
-                continue
-                
-            # Every tab must include Patient_ID as the unique key
-            tab_headers = ["Patient_ID"] + tab_cols
-            
-            # Split rows data for this tab
-            tab_rows = []
-            for row in excel_rows[1:]:
-                d = {}
-                empty = True
-                
-                # Fetch patient ID with robust float-to-integer normalization!
-                pid_val = ""
-                for idx, h in enumerate(standard_headers):
-                    if h == "Patient_ID":
-                        pid_val = normalize_pid(row[idx]) if row[idx] is not None else ""
-                        break
-                
-                if not pid_val:
-                    continue  # skip row if Patient ID is missing
-                    
-                d["Patient_ID"] = pid_val
-                
-                # Fetch other columns for this tab
-                for idx, h in enumerate(standard_headers):
-                    if h in tab_cols:
-                        val = str(row[idx]).strip() if row[idx] is not None else ""
-                        d[h] = val
-                        if val:
-                            empty = False
-                            
-                tab_rows.append(d)
-                
-            tables_payload[tab] = {
-                "headers": tab_headers,
-                "rows": tab_rows
-            }
-
-        if not tables_payload:
-            return jsonify(success=False, message="No categorized data columns found in Excel."), 400
-
-        # Send bulk payload to Apps Script for fast batch writes
-        result = s.bulk_upload(tables_payload)
-
-        # Clear our server-side cache so the next view page loads fresh data instantly!
-        joined_cache["data"] = None
-
-        # Assemble summary message
-        parts = []
-        for tab, stats in result["results"].items():
-            if stats["inserted"] or stats["updated"]:
-                parts.append(f"{tab}: {stats['inserted']} added, {stats['updated']} updated")
-
-        status_msg = "Successfully processed and distributed columns: " + ", ".join(parts) + "."
-
-        return jsonify(success=True, message=status_msg,
-                       warnings=result["warnings"],
-                       new_columns=result["new_columns"],
-                       detected_tab="Bulk Split")
-
+        success, res, code = process_excel_data(excel_rows)
+        if not success:
+            return jsonify(success=False, message=res), code
+        return jsonify(success=True, **res)
     except Exception as e:
-        return jsonify(success=False, message=f"Internal Processing Error: {str(e)}"), 500
+        return jsonify(success=False, message=str(e)), 500
     finally:
-        if os.path.exists(path):
-            os.remove(path)
+        if os.path.exists(path): os.remove(path)
+
+
+@app.route("/api/upload-json", methods=["POST"])
+def api_upload_json():
+    """Endpoint for chunked JSON uploads from frontend."""
+    if not session.get("logged_in"):
+        return jsonify(success=False, message="Unauthorized. Session may have expired."), 401
+    
+    data = request.get_json(silent=True)
+    if not data or "rows" not in data:
+        return jsonify(success=False, message="No data rows received in request."), 400
+        
+    rows = data.get("rows", [])
+    
+    try:
+        # Process the chunk (contains headers + subset of data)
+        success, res, code = process_excel_data(rows)
+        if not success:
+            return jsonify(success=False, message=res), code
+        return jsonify(success=True, **res)
+    except Exception as e:
+        print(f"Error processing chunk: {str(e)}")
+        return jsonify(success=False, message=f"Server Error: {str(e)}"), 500
 
 
 @app.route("/api/live-data")
