@@ -251,15 +251,22 @@ def process_excel_data(excel_rows):
     for h in standard_headers:
         if not h or h == "Patient_ID":
             continue
+            
         found_tab = None
         h_std = h.replace(" ", "_").replace("-", "_").lower()
+        
+        # 1. Exact or partial match in existing sheet headers
         for tab, tab_hdrs in existing_sheet_headers.items():
             tab_hdrs_std = [x.replace(" ", "_").replace("-", "_").lower() for x in tab_hdrs]
-            if h_std in tab_hdrs_std:
+            # Match if normalized names match OR if one is a substring of the other (fuzzy mapping)
+            if any(h_std == th or h_std in th or th in h_std for th in tab_hdrs_std):
                 found_tab = tab
                 break
+        
+        # 2. Fallback to keyword-based classification
         if not found_tab:
             found_tab = classify_column(h)
+            
         col_to_tab[h] = found_tab
 
     # Build dynamic bulk payload split by category tab

@@ -202,8 +202,7 @@
                 const chunkData = dataRows.slice(chunkStart, chunkEnd);
                 
                 // Update UI overlay message
-                loadingOverlay.querySelector('p').innerHTML = 
-                    `Parsing & Uploading Batch <strong>${i + 1} of ${totalChunks}</strong>...<br><small>Processing rows ${chunkStart + 1} to ${Math.min(chunkEnd, dataRows.length)}</small>`;
+                loadingOverlay.querySelector('p').innerHTML = `Uploading data to Google Sheets... Please wait.`;
 
                 const payload = {
                     rows: [headers, ...chunkData]
