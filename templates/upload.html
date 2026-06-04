@@ -237,6 +237,15 @@
 
             // 3. Get existing sheet headers from backend (lightweight call)
             const configResp = await fetch('/api/upload-config');
+            if (!configResp.ok) {
+                const text = await configResp.text();
+                throw new Error(`Failed to load upload config (Server returned status ${configResp.status}): ${text.slice(0, 200)}`);
+            }
+            const configContentType = configResp.headers.get('content-type') || '';
+            if (!configContentType.includes('application/json')) {
+                const text = await configResp.text();
+                throw new Error(`Invalid response format from server (expected JSON, got ${configContentType}): ${text.slice(0, 200)}`);
+            }
             const config = await configResp.json();
             if (!config.success) throw new Error(config.message || 'Failed to get upload config');
             
@@ -304,30 +313,92 @@
             console.log('Column → Tab mapping:', colToTab);
             console.log('Tables payload summary:', Object.keys(tablesPayload).map(t => `${t}: ${tablesPayload[t].headers.length} cols, ${tablesPayload[t].rows.length} rows`));
 
-            // 6. Send DIRECTLY to Google Apps Script (bypasses Vercel limits entirely!)
+            // 6. Send split bulk data (attempts direct first, then falls back to backend)
             const gasPayload = {
                 action: 'bulk_upload',
                 tables: tablesPayload
             };
             
-            const gasResp = await fetch(scriptUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain' },
-                body: JSON.stringify(gasPayload),
-                redirect: 'follow'
-            });
+            let gasResult;
+            let directUploadSuccess = false;
             
-            const gasResult = await gasResp.json();
-            
-            if (!gasResult.success) {
-                throw new Error(gasResult.message || 'Google Apps Script returned an error.');
+            try {
+                console.log('Attempting direct upload to Google Apps Script...');
+                if (!scriptUrl) {
+                    throw new Error('Google Apps Script URL is empty or unconfigured.');
+                }
+                
+                const gasResp = await fetch(scriptUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'text/plain' },
+                    body: JSON.stringify(gasPayload),
+                    redirect: 'follow'
+                });
+                
+                if (!gasResp.ok) {
+                    throw new Error(`Direct connection error: Status ${gasResp.status}`);
+                }
+                
+                const contentType = gasResp.headers.get('content-type') || '';
+                if (!contentType.includes('application/json')) {
+                    const text = await gasResp.text();
+                    throw new Error(`Non-JSON response from Google Apps Script (Content-Type: ${contentType}): ${text.slice(0, 200)}`);
+                }
+                
+                gasResult = await gasResp.json();
+                if (!gasResult.success) {
+                    throw new Error(gasResult.message || 'Google Apps Script returned success=false');
+                }
+                directUploadSuccess = true;
+                console.log('Direct upload completed successfully.');
+            } catch (directErr) {
+                console.warn('Direct upload failed or was blocked:', directErr);
+                loadingOverlay.querySelector('p').textContent = 'Direct upload failed (likely CORS or adblocker). Falling back to server-to-server upload...';
+                
+                // Fallback: Send raw file to Flask backend (/api/upload)
+                const formData = new FormData();
+                formData.append('file', file);
+                
+                const backendResp = await fetch('/api/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!backendResp.ok) {
+                    const errText = await backendResp.text();
+                    throw new Error(`Fallback upload failed: Server returned ${backendResp.status} - ${errText.slice(0, 200)}`);
+                }
+                
+                const backendContentType = backendResp.headers.get('content-type') || '';
+                if (!backendContentType.includes('application/json')) {
+                    const errText = await backendResp.text();
+                    throw new Error(`Fallback upload returned invalid format (expected JSON, got ${backendContentType}): ${errText.slice(0, 200)}`);
+                }
+                
+                const backendResult = await backendResp.json();
+                if (!backendResult.success) {
+                    throw new Error(backendResult.message || 'Server upload failed');
+                }
+                
+                // Construct a result object compatible with success display
+                gasResult = {
+                    success: true,
+                    results: backendResult.results || {},
+                    new_columns: backendResult.new_columns || {},
+                    warnings: backendResult.warnings || [],
+                    message: backendResult.message || 'Successfully processed via backend.'
+                };
+                console.log('Fallback backend upload completed successfully.');
             }
 
             // 7. Show success
             msgDiv.style.display = 'block';
             msgDiv.className = 'result-message success';
             
-            let html = '<h4>Data Upload Complete!</h4>';
+            let html = `<h4>Data Upload Complete!</h4>`;
+            if (!directUploadSuccess) {
+                html += `<p style="color:#0f5132; font-weight:600; font-size:13px; margin-bottom:10px;">⚠️ Uploaded successfully via backend fallback (Direct connection was blocked/failed).</p>`;
+            }
             
             const parts = [];
             for (const tab in gasResult.results) {
@@ -336,7 +407,11 @@
                     parts.push(`${tab}: ${s.inserted} added, ${s.updated} updated`);
                 }
             }
-            html += '<p>' + parts.join(', ') + '</p>';
+            if (parts.length > 0) {
+                html += '<p>' + parts.join(', ') + '</p>';
+            } else {
+                html += '<p>' + (gasResult.message || 'No new changes detected.') + '</p>';
+            }
             
             // Show column mapping details
             html += '<div style="margin-top:10px; padding:10px; background:#f0fdf4; border-radius:6px; font-size:13px;">';

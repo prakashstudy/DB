@@ -4,6 +4,7 @@ Backend: Python Flask  |  Database: Google Sheets (Communicates via Google Apps 
 """
 
 import os
+import tempfile
 import time
 from flask import (Flask, render_template, request, jsonify, session, redirect, url_for, make_response)
 from dotenv import load_dotenv
@@ -321,7 +322,8 @@ def process_excel_data(excel_rows):
     return True, {
         "message": status_msg,
         "warnings": result["warnings"],
-        "new_columns": result["new_columns"]
+        "new_columns": result["new_columns"],
+        "results": result["results"]
     }, 200
 
 
@@ -333,7 +335,7 @@ def api_upload():
         return jsonify(success=False, message="No file selected."), 400
 
     f = request.files["file"]
-    path = os.path.join("/tmp", f.filename)
+    path = os.path.join(tempfile.gettempdir(), f.filename)
     f.save(path)
     try:
         wb = load_workbook(path, read_only=True, data_only=True)
@@ -354,27 +356,17 @@ def api_upload():
         if os.path.exists(path): os.remove(path)
 
 
-@app.route("/api/upload-json", methods=["POST"])
-def api_upload_json():
-    """Endpoint for chunked JSON uploads from frontend."""
+@app.route("/api/upload-config")
+def api_upload_config():
+    """Lightweight endpoint: returns script URL + sheet headers for client-side upload."""
     if not session.get("logged_in"):
-        return jsonify(success=False, message="Unauthorized. Session may have expired."), 401
-    
-    data = request.get_json(silent=True)
-    if not data or "rows" not in data:
-        return jsonify(success=False, message="No data rows received in request."), 400
-        
-    rows = data.get("rows", [])
-    
+        return jsonify(success=False, message="Unauthorized. Please log in first."), 401
     try:
-        # Process the chunk (contains headers + subset of data)
-        success, res, code = process_excel_data(rows)
-        if not success:
-            return jsonify(success=False, message=res), code
-        return jsonify(success=True, **res)
+        s = db()
+        headers = s.get_sheet_headers()
+        return jsonify(success=True, script_url=SCRIPT_URL, sheet_headers=headers)
     except Exception as e:
-        print(f"Error processing chunk: {str(e)}")
-        return jsonify(success=False, message=f"Server Error: {str(e)}"), 500
+        return jsonify(success=False, message=str(e)), 500
 
 
 @app.route("/api/live-data")
