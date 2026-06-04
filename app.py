@@ -37,7 +37,7 @@ def db():
 
 
 def normalize_pid(val):
-    """Normalize patient IDs so 1, 1.0, and ' 1 ' represent the same unique ID."""
+    """Normalize patient IDs so 1, 1.0, and ' 1 ' represent the same unique ID. Filters out 0."""
     if val is None:
         return ""
     val_str = str(val).strip()
@@ -46,9 +46,11 @@ def normalize_pid(val):
     try:
         f = float(val_str)
         if f.is_integer():
-            return str(int(f))
+            val_str = str(int(f))
     except ValueError:
         pass
+    if val_str == "0":
+        return ""
     return val_str
 
 
@@ -179,19 +181,8 @@ def view_page():
         # Speed up: Compute columns and counts instantly in memory! No redundant roundtrips!
         total = len(normalized_data)
         
-        # Gather all unique column headers across the active records
-        cols_seen = set()
-        cols = []
-        for row in normalized_data:
-            for k in row.keys():
-                if k and k not in cols_seen:
-                    cols.append(k)
-                    cols_seen.add(k)
-                    
-        # Put Patient_ID first
-        if "Patient_ID" in cols:
-            cols.remove("Patient_ID")
-            cols.insert(0, "Patient_ID")
+        # Fetch all columns directly from Google Sheets headers to ensure newly added columns show up immediately!
+        cols = s.all_columns()
             
         # Render the template response
         resp = make_response(render_template(
@@ -279,6 +270,7 @@ def process_excel_data(excel_rows):
             continue
         tab_headers = ["Patient_ID"] + tab_cols
         tab_rows = []
+        tab_has_data = False
         for row in excel_rows[1:]:
             d = {}
             pid_val = ""
@@ -303,7 +295,10 @@ def process_excel_data(excel_rows):
                     else:
                         d[h] = "" # Row is shorter than headers
             tab_rows.append(d)
-        tables_payload[tab] = {"headers": tab_headers, "rows": tab_rows}
+            tab_has_data = True
+                
+        if tab_has_data:
+            tables_payload[tab] = {"headers": tab_headers, "rows": tab_rows}
 
     if not tables_payload:
         return False, "No categorized data columns found.", 400

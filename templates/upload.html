@@ -58,7 +58,7 @@
             <!-- Loading Spinner & Message Box -->
             <div class="loading-overlay" id="loadingOverlay">
                 <div class="spinner"></div>
-                <p>Analyzing columns, mapping categories, and updating Google Sheets dynamically...</p>
+                <p>Uploading...</p>
             </div>
             
             <div id="message" class="result-message" style="display: none;"></div>
@@ -183,7 +183,8 @@
         let s = String(val).trim();
         if (s.endsWith('.0')) s = s.slice(0, -2);
         const n = Number(s);
-        if (!isNaN(n) && Number.isInteger(n)) return String(n);
+        if (!isNaN(n) && Number.isInteger(n)) s = String(n);
+        if (s === '0') return '';
         return s;
     }
 
@@ -200,7 +201,7 @@
         const file = fileInput.files[0];
         submitBtn.disabled = true;
         loadingOverlay.style.display = 'flex';
-        loadingOverlay.querySelector('p').textContent = 'Uploading data to Google Sheets... Please wait.';
+        loadingOverlay.querySelector('p').textContent = 'Uploading...';
         msgDiv.style.display = 'none';
 
         try {
@@ -279,7 +280,7 @@
                 colToTab[h] = foundTab;
             }
 
-            // 5. Build bulk payload split by category tab
+            // 5. Build bulk payload split by category tab (allows blank rows with patient IDs, skips empty tabs)
             const dataRows = allRows.slice(1);
             const tablesPayload = {};
             const colMapping = {}; // For debug: track which cols went where
@@ -288,9 +289,9 @@
                 const tabCols = standardHeaders.filter(h => h && colToTab[h] === tab);
                 if (tabCols.length === 0) continue;
                 
-                colMapping[tab] = tabCols;
                 const tabHeaders = ['Patient_ID', ...tabCols];
                 const tabRows = [];
+                let tabHasData = false;
                 
                 for (const row of dataRows) {
                     const pidVal = pidColIdx < row.length ? normalizePid(row[pidColIdx]) : '';
@@ -304,9 +305,13 @@
                         }
                     }
                     tabRows.push(d);
+                    tabHasData = true;
                 }
                 
-                tablesPayload[tab] = { headers: tabHeaders, rows: tabRows };
+                if (tabHasData) {
+                    colMapping[tab] = tabCols;
+                    tablesPayload[tab] = { headers: tabHeaders, rows: tabRows };
+                }
             }
             
             // Log column mapping for debugging
@@ -353,7 +358,7 @@
                 console.log('Direct upload completed successfully.');
             } catch (directErr) {
                 console.warn('Direct upload failed or was blocked:', directErr);
-                loadingOverlay.querySelector('p').textContent = 'Direct upload failed (likely CORS or adblocker). Falling back to server-to-server upload...';
+                loadingOverlay.querySelector('p').textContent = 'Uploading...';
                 
                 // Fallback: Send raw file to Flask backend (/api/upload)
                 const formData = new FormData();
@@ -394,47 +399,7 @@
             // 7. Show success
             msgDiv.style.display = 'block';
             msgDiv.className = 'result-message success';
-            
-            let html = `<h4>Data Upload Complete!</h4>`;
-            if (!directUploadSuccess) {
-                html += `<p style="color:#0f5132; font-weight:600; font-size:13px; margin-bottom:10px;">⚠️ Uploaded successfully via backend fallback (Direct connection was blocked/failed).</p>`;
-            }
-            
-            const parts = [];
-            for (const tab in gasResult.results) {
-                const s = gasResult.results[tab];
-                if (s.inserted || s.updated) {
-                    parts.push(`${tab}: ${s.inserted} added, ${s.updated} updated`);
-                }
-            }
-            if (parts.length > 0) {
-                html += '<p>' + parts.join(', ') + '</p>';
-            } else {
-                html += '<p>' + (gasResult.message || 'No new changes detected.') + '</p>';
-            }
-            
-            // Show column mapping details
-            html += '<div style="margin-top:10px; padding:10px; background:#f0fdf4; border-radius:6px; font-size:13px;">';
-            html += '<strong>Column Mapping:</strong><br>';
-            for (const tab in colMapping) {
-                if (colMapping[tab].length > 0) {
-                    html += `<em>${tab}</em>: ${colMapping[tab].join(', ')}<br>`;
-                }
-            }
-            html += '</div>';
-            
-            if (gasResult.new_columns && Object.keys(gasResult.new_columns).length > 0) {
-                const allNewCols = Object.values(gasResult.new_columns).flat();
-                html += '<div class="new-cols-badge">New Column(s) added: <strong>' + allNewCols.join(', ') + '</strong></div>';
-            }
-
-            if (gasResult.warnings && gasResult.warnings.length > 0) {
-                html += '<div class="warning-box"><strong>Warnings:</strong>';
-                gasResult.warnings.forEach(w => html += '<p>' + w + '</p>');
-                html += '</div>';
-            }
-            
-            msgDiv.innerHTML = html;
+            msgDiv.innerHTML = '<h4>Upload Complete</h4>';
             
             fileInput.value = '';
             fileInfo.style.display = 'none';
@@ -448,7 +413,7 @@
         } finally {
             submitBtn.disabled = false;
             loadingOverlay.style.display = 'none';
-            loadingOverlay.querySelector('p').textContent = 'Analyzing columns, mapping categories, and updating Google Sheets dynamically...';
+            loadingOverlay.querySelector('p').textContent = 'Uploading...';
         }
     });
     </script>
