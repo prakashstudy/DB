@@ -157,6 +157,36 @@
         fileError.style.display = 'none';
     });
 
+    // ── Column Classification (same logic as Python classify_column) ──
+    function classifyColumn(colName) {
+        const c = colName.toLowerCase().replace(/ /g, '_').replace(/-/g, '_');
+        if (c === 'patient_id') return null;
+
+        const rules = [
+            { tab: 'Pathology', keys: ['tumor','grade','dcis','desmoplasia','necro','er_','_er','pr_','_pr','her','ki','ihc','fish','stain','surgery','quadrant','sx','surgeon','resect','til','lymphnode','lympho','pns','pathologic','adj_breast'] },
+            { tab: 'RMD', keys: ['menopaus','menstru','menarch','preg','birth','gravida','para','breast_feeding','feeding','marriage','fertility','lmp'] },
+            { tab: 'FamilyPersonalHistory', keys: ['family','history','relative','morbid','diabet','dm','hypert','htn','caste','community','religion'] },
+            { tab: 'Followup', keys: ['metas','recur','chem','_rt','ct_','hormon','oncolog','survival','death','event','mrd','follow','cycle','annie','todo'] },
+            { tab: 'Samples', keys: ['sample','block','blood','tissue','freez','frozen'] },
+            { tab: 'Analysis', keys: ['analy','gene','sequenc','mutation'] },
+            { tab: 'DMP', keys: ['stage','size','lump','staging','diagnos','affected','side','birad','clinical_present','multicentric','multifocal','detection'] },
+            { tab: 'Demographics', keys: ['hospital','age','gender','wt','ht','bmi','educat','occupat','tongue','diet','background'] },
+        ];
+        for (const rule of rules) {
+            if (rule.keys.some(k => c.includes(k))) return rule.tab;
+        }
+        return 'Demographics'; // default
+    }
+
+    function normalizePid(val) {
+        if (val === null || val === undefined) return '';
+        let s = String(val).trim();
+        if (s.endsWith('.0')) s = s.slice(0, -2);
+        const n = Number(s);
+        if (!isNaN(n) && Number.isInteger(n)) return String(n);
+        return s;
+    }
+
     uploadForm.addEventListener('submit', async function(e) {
         e.preventDefault();
 
@@ -170,6 +200,7 @@
         const file = fileInput.files[0];
         submitBtn.disabled = true;
         loadingOverlay.style.display = 'flex';
+        loadingOverlay.querySelector('p').textContent = 'Uploading data to Google Sheets... Please wait.';
         msgDiv.style.display = 'none';
 
         try {
@@ -177,89 +208,159 @@
             const dataBuffer = await file.arrayBuffer();
             const workbook = XLSX.read(dataBuffer, { type: 'array' });
             const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-            
-            // Convert to 2D Array (Header + Rows)
-            const allRows = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
+            const allRows = XLSX.utils.sheet_to_json(firstSheet, { header: 1, defval: '' });
             
             if (allRows.length < 2) {
-                throw new Error("The Excel file appears to be empty or missing data rows.");
+                throw new Error('The Excel file appears to be empty or missing data rows.');
             }
 
-            const headers = allRows[0];
-            const dataRows = allRows.slice(1).filter(r => r.length > 0);
+            // 2. Standardize headers
+            const rawHeaders = allRows[0].map(h => h !== null && h !== undefined ? String(h).trim() : '');
+            const standardHeaders = [];
+            let pidColIdx = -1;
             
-            // 2. Chunking Logic
-            const CHUNK_SIZE = 250; 
-            const totalChunks = Math.ceil(dataRows.length / CHUNK_SIZE);
+            for (let i = 0; i < rawHeaders.length; i++) {
+                const h = rawHeaders[i];
+                if (!h) { standardHeaders.push(''); continue; }
+                const hc = h.replace(/ /g, '_').replace(/-/g, '_');
+                if (['patient_id','patientid','id_patient','pat_id'].includes(hc.toLowerCase())) {
+                    standardHeaders.push('Patient_ID');
+                    pidColIdx = i;
+                } else {
+                    standardHeaders.push(h);
+                }
+            }
             
-            let combinedWarnings = [];
-            let combinedNewCols = [];
-            let summaryMessages = [];
+            if (pidColIdx === -1) {
+                throw new Error('Excel file is missing the "Patient_ID" or "Patient ID" column in the header row.');
+            }
 
-            for (let i = 0; i < totalChunks; i++) {
-                const chunkStart = i * CHUNK_SIZE;
-                const chunkEnd = chunkStart + CHUNK_SIZE;
-                const chunkData = dataRows.slice(chunkStart, chunkEnd);
+            // 3. Get existing sheet headers from backend (lightweight call)
+            const configResp = await fetch('/api/upload-config');
+            const config = await configResp.json();
+            if (!config.success) throw new Error(config.message || 'Failed to get upload config');
+            
+            const scriptUrl = config.script_url;
+            const existingHeaders = config.sheet_headers; // { Demographics: [...], Pathology: [...], ... }
+
+            // 4. Classify each column to its tab
+            const TABLES = ['Demographics','DMP','RMD','FamilyPersonalHistory','Pathology','Followup','Samples','Analysis'];
+            const colToTab = {};
+            
+            // Aggressive normalization: strip ALL special chars for comparison
+            function normalizeForMatch(s) {
+                return s.replace(/[^a-z0-9]/gi, '').toLowerCase();
+            }
+            
+            for (const h of standardHeaders) {
+                if (!h || h === 'Patient_ID') continue;
+                const hNorm = normalizeForMatch(h);
+                let foundTab = null;
                 
-                // Update UI overlay message
-                loadingOverlay.querySelector('p').innerHTML = `Uploading data to Google Sheets... Please wait.`;
-
-                const payload = {
-                    rows: [headers, ...chunkData]
-                };
-
-                const resp = await fetch('/api/upload-json', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-
-                if (!resp.ok) {
-                    const errorText = await resp.text();
-                    throw new Error(`Batch ${i+1} failed: ${errorText}`);
+                // Check existing sheet headers first (aggressive normalized match)
+                for (const tab of TABLES) {
+                    const tabHdrs = (existingHeaders[tab] || []).map(x => normalizeForMatch(x));
+                    if (tabHdrs.some(th => th && hNorm && (hNorm === th || hNorm.includes(th) || th.includes(hNorm)))) {
+                        foundTab = tab;
+                        break;
+                    }
                 }
-
-                let result;
-                try {
-                    result = await resp.json();
-                } catch(e) {
-                    const text = await resp.text();
-                    console.error("Failed to parse JSON response:", text);
-                    throw new Error(`The server returned an invalid response (not JSON). This usually happens if you were logged out or the server crashed. Response preview: ${text.substring(0, 200)}...`);
-                }
-
-                if (!result.success) {
-                    throw new Error(`Batch ${i+1} Error: ${result.message}`);
-                }
-
-                // Collect results
-                if (result.warnings) combinedWarnings = combinedWarnings.concat(result.warnings);
-                if (result.new_columns) combinedNewCols = combinedNewCols.concat(result.new_columns);
-                summaryMessages.push(result.message);
+                
+                if (!foundTab) foundTab = classifyColumn(h);
+                colToTab[h] = foundTab;
             }
 
-            // 3. Final Success UI
+            // 5. Build bulk payload split by category tab
+            const dataRows = allRows.slice(1);
+            const tablesPayload = {};
+            const colMapping = {}; // For debug: track which cols went where
+            
+            for (const tab of TABLES) {
+                const tabCols = standardHeaders.filter(h => h && colToTab[h] === tab);
+                if (tabCols.length === 0) continue;
+                
+                colMapping[tab] = tabCols;
+                const tabHeaders = ['Patient_ID', ...tabCols];
+                const tabRows = [];
+                
+                for (const row of dataRows) {
+                    const pidVal = pidColIdx < row.length ? normalizePid(row[pidColIdx]) : '';
+                    if (!pidVal) continue;
+                    
+                    const d = { Patient_ID: pidVal };
+                    for (let i = 0; i < standardHeaders.length; i++) {
+                        const h = standardHeaders[i];
+                        if (tabCols.includes(h)) {
+                            d[h] = i < row.length && row[i] !== null && row[i] !== undefined ? String(row[i]).trim() : '';
+                        }
+                    }
+                    tabRows.push(d);
+                }
+                
+                tablesPayload[tab] = { headers: tabHeaders, rows: tabRows };
+            }
+            
+            // Log column mapping for debugging
+            console.log('Column → Tab mapping:', colToTab);
+            console.log('Tables payload summary:', Object.keys(tablesPayload).map(t => `${t}: ${tablesPayload[t].headers.length} cols, ${tablesPayload[t].rows.length} rows`));
+
+            // 6. Send DIRECTLY to Google Apps Script (bypasses Vercel limits entirely!)
+            const gasPayload = {
+                action: 'bulk_upload',
+                tables: tablesPayload
+            };
+            
+            const gasResp = await fetch(scriptUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain' },
+                body: JSON.stringify(gasPayload),
+                redirect: 'follow'
+            });
+            
+            const gasResult = await gasResp.json();
+            
+            if (!gasResult.success) {
+                throw new Error(gasResult.message || 'Google Apps Script returned an error.');
+            }
+
+            // 7. Show success
             msgDiv.style.display = 'block';
             msgDiv.className = 'result-message success';
             
             let html = '<h4>Data Upload Complete!</h4>';
-            html += `<p>Successfully processed ${dataRows.length} rows in ${totalChunks} batches.</p>`;
             
-            if (combinedNewCols.length > 0) {
-                const uniqueCols = [...new Set(combinedNewCols)];
-                html += '<div class="new-cols-badge">New Column(s) added: <strong>' + uniqueCols.join(', ') + '</strong></div>';
+            const parts = [];
+            for (const tab in gasResult.results) {
+                const s = gasResult.results[tab];
+                if (s.inserted || s.updated) {
+                    parts.push(`${tab}: ${s.inserted} added, ${s.updated} updated`);
+                }
+            }
+            html += '<p>' + parts.join(', ') + '</p>';
+            
+            // Show column mapping details
+            html += '<div style="margin-top:10px; padding:10px; background:#f0fdf4; border-radius:6px; font-size:13px;">';
+            html += '<strong>Column Mapping:</strong><br>';
+            for (const tab in colMapping) {
+                if (colMapping[tab].length > 0) {
+                    html += `<em>${tab}</em>: ${colMapping[tab].join(', ')}<br>`;
+                }
+            }
+            html += '</div>';
+            
+            if (gasResult.new_columns && Object.keys(gasResult.new_columns).length > 0) {
+                const allNewCols = Object.values(gasResult.new_columns).flat();
+                html += '<div class="new-cols-badge">New Column(s) added: <strong>' + allNewCols.join(', ') + '</strong></div>';
             }
 
-            if (combinedWarnings.length > 0) {
-                const uniqueWarnings = [...new Set(combinedWarnings)];
+            if (gasResult.warnings && gasResult.warnings.length > 0) {
                 html += '<div class="warning-box"><strong>Warnings:</strong>';
-                uniqueWarnings.forEach(w => html += '<p>' + w + '</p>');
+                gasResult.warnings.forEach(w => html += '<p>' + w + '</p>');
                 html += '</div>';
             }
             
             msgDiv.innerHTML = html;
             
-            // Clear inputs
             fileInput.value = '';
             fileInfo.style.display = 'none';
             dropzone.style.display = 'flex';
@@ -272,7 +373,7 @@
         } finally {
             submitBtn.disabled = false;
             loadingOverlay.style.display = 'none';
-            loadingOverlay.querySelector('p').textContent = "Analyzing columns, mapping categories, and updating Google Sheets dynamically...";
+            loadingOverlay.querySelector('p').textContent = 'Analyzing columns, mapping categories, and updating Google Sheets dynamically...';
         }
     });
     </script>
